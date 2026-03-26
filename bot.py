@@ -80,10 +80,10 @@ def load_whitelist():
             with open('whitelist.json', 'r') as f:
                 data = json.load(f)
                 # 加载普通用户
-                file_allowed = set(data.get('allowed', []))
+                file_allowed = set(int(x) for x in data.get('allowed', []))
                 ALLOWED_USER_IDS = ALLOWED_USER_IDS.union(file_allowed)
-                # 加载文件中的管理员，合并到环境变量的管理员
-                file_admins = set(data.get('admins', []))
+                # 加载文件中的管理员，合并到已有的管理员
+                file_admins = set(int(x) for x in data.get('admins', []))
                 ADMIN_USER_IDS = ADMIN_USER_IDS.union(file_admins)
                 print(f"✅ 已加载白名单: {len(ALLOWED_USER_IDS)} 个用户, {len(ADMIN_USER_IDS)} 个管理员")
     except Exception as e:
@@ -92,6 +92,7 @@ def load_whitelist():
 
 def save_whitelist():
     """保存白名单到文件"""
+    global ALLOWED_USER_IDS, ADMIN_USER_IDS
     try:
         with open('whitelist.json', 'w') as f:
             json.dump({
