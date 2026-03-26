@@ -349,27 +349,64 @@ K线数据:
             await self.send_message(chat_id, f"🔍 开始分析 {symbol.upper()}...")
             
             klines_data = {}
+            success_count = 0
             
             for tf_name, tf_code in TIMEFRAMES.items():
                 try:
                     klines = await self.get_klines(symbol, tf_code)
-                    klines_data[tf_name] = klines
-                    
-                    chart = self.create_kline_chart(klines, symbol.upper(), tf_name)
-                    await self.send_photo(chat_id, chart, f"{symbol.upper()} {tf_name} K线图")
-                    await asyncio.sleep(0.5)
+                    if klines and len(klines) > 0:
+                        klines_data[tf_name] = klines
+                        
+                        chart = self.create_kline_chart(klines, symbol.upper(), tf_name)
+                        await self.send_photo(chat_id, chart, f"{symbol.upper()} {tf_name} K线图")
+                        success_count += 1
+                        await asyncio.sleep(0.5)
                     
                 except Exception as e:
                     print(f"获取{tf_name}数据失败: {e}")
+                    import traceback
+                    traceback.print_exc()
                     continue
             
-            await self.send_message(chat_id, "🤖 正在调用AI进行量化分析...")
+            # 检查是否成功获取了数据
+            if success_count == 0:
+                await self.send_message(
+                    chat_id, 
+                    "❌ 无法获取K线数据\n\n"
+                    "可能原因：\n"
+                    "• 币安API暂时不可用\n"
+                    "• 交易对不存在\n"
+                    "• 网络连接问题\n\n"
+                    "请稍后重试或检查交易对名称。"
+                )
+                return
             
-            analysis = await self.analyze_with_deepseek(klines_data, symbol.upper())
+            if len(klines_data) == 0:
+                await self.send_message(chat_id, "❌ 没有可用的K线数据进行分枅")
+                return
             
-            await self.send_message(chat_id, f"📊 *量化分析报告*\n\n{analysis}")
+            await self.send_message(chat_id, f"✅ 成功获取 {success_count} 个周期数据，正在调用AI进行量化分析...")
+            
+            try:
+                analysis = await self.analyze_with_deepseek(klines_data, symbol.upper())
+                await self.send_message(chat_id, f"📊 *量化分析报告*\n\n{analysis}")
+            except Exception as e:
+                print(f"DeepSeek分析失败: {e}")
+                import traceback
+                traceback.print_exc()
+                await self.send_message(
+                    chat_id, 
+                    f"❌ AI分析失败: {str(e)}\n\n"
+                    "可能原因：\n"
+                    "• DeepSeek API暂时不可用\n"
+                    "• API密钥无效或余额不足\n"
+                    "• 请求超时"
+                )
             
         except Exception as e:
+            print(f"分析流程失败: {e}")
+            import traceback
+            traceback.print_exc()
             await self.send_message(chat_id, f"❌ 分析失败: {str(e)}")
 
 
