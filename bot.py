@@ -15,6 +15,8 @@ import time
 import asyncio
 import aiohttp
 import requests
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import pandas as pd
@@ -28,36 +30,47 @@ DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 BINANCE_API_BASE = "https://api.binance.com"
 DEEPSEEK_API_BASE = "https://api.deepseek.com"
 
-# 管理员用户ID（可以添加其他用户）
-# 请把你的Telegram用户ID填在这里
+# 从环境变量加载管理员ID
 ADMIN_USER_IDS: Set[int] = set()
-# 示例: ADMIN_USER_IDS = {123456789, 987654321}
-
-# 允许访问的用户ID列表（白名单）
 ALLOWED_USER_IDS: Set[int] = set()
+
+# 加载环境变量中的用户ID
+admin_ids_str = os.getenv("ADMIN_USER_IDS", "")
+if admin_ids_str:
+    try:
+        ADMIN_USER_IDS = set(int(x.strip()) for x in admin_ids_str.split(",") if x.strip())
+    except:
+        pass
+
+allowed_ids_str = os.getenv("ALLOWED_USER_IDS", "")
+if allowed_ids_str:
+    try:
+        ALLOWED_USER_IDS = set(int(x.strip()) for x in allowed_ids_str.split(",") if x.strip())
+    except:
+        pass
 
 # 前20加密货币列表
 TOP_20_CRYPTOS = [
-    ("BTC", "比特币 Bitcoin"),
-    ("ETH", "以太坊 Ethereum"),
-    ("BNB", "币安币 BNB"),
-    ("SOL", "索拉纳 Solana"),
-    ("XRP", "瑞波币 XRP"),
-    ("DOGE", "狗狗币 Dogecoin"),
-    ("ADA", "艾达币 Cardano"),
-    ("AVAX", "雪崩 Avalanche"),
-    ("DOT", "波卡 Polkadot"),
+    ("BTC", "比特币"),
+    ("ETH", "以太坊"),
+    ("BNB", "币安币"),
+    ("SOL", "索拉纳"),
+    ("XRP", "瑞波币"),
+    ("DOGE", "狗狗币"),
+    ("ADA", "艾达币"),
+    ("AVAX", "雪崩"),
+    ("DOT", "波卡"),
     ("LINK", "Chainlink"),
     ("MATIC", "Polygon"),
-    ("LTC", "莱特币 Litecoin"),
+    ("LTC", "莱特币"),
     ("UNI", "Uniswap"),
     ("ATOM", "Cosmos"),
-    ("ETC", "以太经典 Ethereum Classic"),
-    ("XLM", "恒星币 Stellar"),
+    ("ETC", "以太经典"),
+    ("XLM", "恒星币"),
     ("FIL", "Filecoin"),
     ("ARB", "Arbitrum"),
     ("OP", "Optimism"),
-    ("NEAR", "NEAR Protocol"),
+    ("NEAR", "NEAR"),
 ]
 
 # K线周期映射
@@ -70,7 +83,6 @@ TIMEFRAMES = {
     "1M": "1M"
 }
 
-# 获取K线数据的限制数量
 KLINE_LIMIT = 100
 
 
@@ -82,8 +94,10 @@ def load_whitelist():
             with open('whitelist.json', 'r') as f:
                 data = json.load(f)
                 ALLOWED_USER_IDS = set(data.get('allowed', []))
-                ADMIN_USER_IDS = set(data.get('admins', []))
-                print(f"✅ 已加载白名单: {len(ALLOWED_USER_IDS)} 个用户")
+                # 合并环境变量和文件中的管理员
+                file_admins = set(data.get('admins', []))
+                ADMIN_USER_IDS = ADMIN_USER_IDS.union(file_admins)
+                print(f"✅ 已加载白名单: {len(ALLOWED_USER_IDS)} 个用户, {len(ADMIN_USER_IDS)} 个管理员")
     except Exception as e:
         print(f"⚠️ 加载白名单失败: {e}")
 
@@ -102,6 +116,9 @@ def save_whitelist():
 
 def is_allowed(user_id: int) -> bool:
     """检查用户是否在白名单中"""
+    # 如果没有设置任何白名单，允许所有人访问
+    if not ADMIN_USER_IDS and not ALLOWED_USER_IDS:
+        return True
     return user_id in ALLOWED_USER_IDS or user_id in ADMIN_USER_IDS
 
 
@@ -140,7 +157,6 @@ class CryptoAnalyzerBot:
     
     def create_kline_chart(self, klines: List[List], symbol: str, timeframe: str) -> BytesIO:
         """生成K线图"""
-        # 解析K线数据
         df = pd.DataFrame(klines, columns=[
             'timestamp', 'open', 'high', 'low', 'close', 'volume',
             'close_time', 'quote_volume', 'trades', 'taker_buy_base',
@@ -154,35 +170,25 @@ class CryptoAnalyzerBot:
         df['close'] = df['close'].astype(float)
         df['volume'] = df['volume'].astype(float)
         
-        # 创建图表
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), 
                                        gridspec_kw={'height_ratios': [3, 1]})
         
-        # 绘制K线
         for idx, row in df.iterrows():
-            color = 'green' if row['close'] >= row['open'] else 'red'
-            
-            # 实体
+            color = '#26a69a' if row['close'] >= row['open'] else '#ef5350'
             height = abs(row['close'] - row['open'])
             bottom = min(row['close'], row['open'])
-            ax1.bar(row['timestamp'], height, bottom=bottom, color=color, width=0.6, alpha=0.8)
-            
-            # 影线
+            ax1.bar(row['timestamp'], height, bottom=bottom, color=color, width=0.6)
             ax1.plot([row['timestamp'], row['timestamp']], 
                     [row['low'], row['high']], 
                     color=color, linewidth=0.5)
         
-        # 设置标题和标签
         ax1.set_title(f'{symbol} {timeframe} K线图', fontsize=14, fontweight='bold')
         ax1.set_ylabel('价格 (USDT)')
         ax1.grid(True, alpha=0.3)
-        
-        # 格式化x轴
         ax1.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d %H:%M'))
         plt.setp(ax1.xaxis.get_majorticklabels(), rotation=45)
         
-        # 绘制成交量
-        colors = ['green' if df.iloc[i]['close'] >= df.iloc[i]['open'] else 'red' 
+        colors = ['#26a69a' if df.iloc[i]['close'] >= df.iloc[i]['open'] else '#ef5350' 
                   for i in range(len(df))]
         ax2.bar(df['timestamp'], df['volume'], color=colors, alpha=0.7, width=0.6)
         ax2.set_ylabel('成交量')
@@ -192,7 +198,6 @@ class CryptoAnalyzerBot:
         
         plt.tight_layout()
         
-        # 保存到内存
         buffer = BytesIO()
         plt.savefig(buffer, format='png', dpi=100, bbox_inches='tight')
         buffer.seek(0)
@@ -202,8 +207,6 @@ class CryptoAnalyzerBot:
     
     async def analyze_with_deepseek(self, klines_data: Dict, symbol: str) -> str:
         """调用DeepSeek API进行量化分析"""
-        
-        # 准备K线数据摘要
         price_data = self._prepare_price_data(klines_data)
         
         prompt = f"""你是一名专业的加密货币量化交易员，负责基于数据做交易决策。
@@ -277,16 +280,13 @@ K线数据:
             df['close'] = df['close'].astype(float)
             df['volume'] = df['volume'].astype(float)
             
-            # 计算技术指标
             sma_20 = df['close'].rolling(window=20).mean().iloc[-1] if len(df) >= 20 else None
             sma_50 = df['close'].rolling(window=50).mean().iloc[-1] if len(df) >= 50 else None
             
-            # 计算波动率
             returns = df['close'].pct_change().dropna()
             volatility = returns.std() * 100
             
-            summary.append(f"""
-【{timeframe}周期】
+            summary.append(f"""【{timeframe}周期】
 - 最新价格: {df['close'].iloc[-1]:.4f}
 - 周期最高: {df['high'].max():.4f}
 - 周期最低: {df['low'].min():.4f}
@@ -294,8 +294,7 @@ K线数据:
 - 平均成交量: {df['volume'].mean():.2f}
 - 波动率: {volatility:.2f}%
 - SMA20: {sma_20:.4f if sma_20 else 'N/A'}
-- SMA50: {sma_50:.4f if sma_50 else 'N/A'}
-""")
+- SMA50: {sma_50:.4f if sma_50 else 'N/A'}""")
         
         return "\n".join(summary)
     
@@ -338,7 +337,7 @@ K线数据:
         if text:
             payload["text"] = text
         
-        async with self.session.post(url, json=payload) as response:
+        async with self.session.post(url, json=payload):
             pass
     
     async def send_photo(self, chat_id: int, photo: BytesIO, caption: str = "") -> None:
@@ -358,38 +357,27 @@ K线数据:
     async def analyze_crypto(self, chat_id: int, symbol: str) -> None:
         """执行完整的加密货币分析流程"""
         try:
-            # 发送开始分析消息
             await self.send_message(chat_id, f"🔍 开始分析 {symbol.upper()}...")
             
-            # 获取各周期K线数据
             klines_data = {}
-            charts = {}
             
             for tf_name, tf_code in TIMEFRAMES.items():
                 try:
                     klines = await self.get_klines(symbol, tf_code)
                     klines_data[tf_name] = klines
                     
-                    # 生成图表
                     chart = self.create_kline_chart(klines, symbol.upper(), tf_name)
-                    charts[tf_name] = chart
-                    
-                    # 发送图表
                     await self.send_photo(chat_id, chart, f"{symbol.upper()} {tf_name} K线图")
-                    
-                    # 短暂延迟避免频率限制
                     await asyncio.sleep(0.5)
                     
                 except Exception as e:
                     print(f"获取{tf_name}数据失败: {e}")
                     continue
             
-            # 调用DeepSeek进行分析
             await self.send_message(chat_id, "🤖 正在调用AI进行量化分析...")
             
             analysis = await self.analyze_with_deepseek(klines_data, symbol.upper())
             
-            # 发送分析结果
             await self.send_message(chat_id, f"📊 *量化分析报告*\n\n{analysis}")
             
         except Exception as e:
@@ -730,6 +718,8 @@ def run_polling():
                     
                 except Exception as e:
                     print(f"轮询错误: {e}")
+                    import traceback
+                    traceback.print_exc()
                     await asyncio.sleep(5)
     
     asyncio.run(poll())
@@ -746,6 +736,7 @@ if __name__ == "__main__":
         exit(1)
     
     print("🚀 启动加密货币量化分析Bot...")
-    print("✅ 功能: 白名单控制 + 交互式菜单 + DeepSeek量化分析")
+    print(f"✅ 管理员数量: {len(ADMIN_USER_IDS)}")
+    print(f"✅ 白名单用户: {len(ALLOWED_USER_IDS)}")
     print("📋 命令: /start - 主菜单, /myid - 查看ID, /admin - 管理员面板")
     run_polling()
