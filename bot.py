@@ -27,6 +27,7 @@ from typing import Optional, Dict, List, Tuple, Set
 # 配置
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
+BINANCE_API_KEY = os.getenv("BINANCE_API_KEY", "")
 
 # 币安API备用域名列表
 BINANCE_API_BASES = [
@@ -148,16 +149,21 @@ class CryptoAnalyzerBot:
             "limit": limit
         }
         
+        # 添加API Key到请求头
+        headers = {}
+        if BINANCE_API_KEY:
+            headers["X-MBX-APIKEY"] = BINANCE_API_KEY
+        
         last_error = None
         for api_base in BINANCE_API_BASES:
             try:
                 url = f"{api_base}/api/v3/klines"
-                async with self.session.get(url, params=params, timeout=10) as response:
+                async with self.session.get(url, params=params, headers=headers, timeout=10) as response:
                     if response.status == 200:
                         return await response.json()
                     else:
                         error_text = await response.text()
-                        last_error = f"{api_base}: HTTP {response.status}"
+                        last_error = f"{api_base}: HTTP {response.status} - {error_text[:100]}"
                         print(f"⚠️ {last_error}")
             except Exception as e:
                 last_error = f"{api_base}: {str(e)[:50]}"
