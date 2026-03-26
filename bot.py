@@ -118,10 +118,10 @@ def save_whitelist():
 
 def is_allowed(user_id: int) -> bool:
     """检查用户是否在白名单中"""
-    # 如果没有设置任何白名单，允许所有人访问
-    if not ADMIN_USER_IDS and not ALLOWED_USER_IDS:
-        return True
-    return user_id in ALLOWED_USER_IDS or user_id in ADMIN_USER_IDS
+    # 暂时允许所有人访问（测试阶段）
+    # 如果要开启白名单，取消下面这行的注释
+    # return user_id in ALLOWED_USER_IDS or user_id in ADMIN_USER_IDS
+    return True
 
 
 def is_admin(user_id: int) -> bool:
