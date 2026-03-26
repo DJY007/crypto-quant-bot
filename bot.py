@@ -30,24 +30,10 @@ DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 BINANCE_API_BASE = "https://api.binance.com"
 DEEPSEEK_API_BASE = "https://api.deepseek.com"
 
-# 从环境变量加载管理员ID
-ADMIN_USER_IDS: Set[int] = set()
+# 管理员用户ID列表
+# 1795326193 - 主管理员
+ADMIN_USER_IDS: Set[int] = {1795326193}
 ALLOWED_USER_IDS: Set[int] = set()
-
-# 加载环境变量中的用户ID
-admin_ids_str = os.getenv("ADMIN_USER_IDS", "")
-if admin_ids_str:
-    try:
-        ADMIN_USER_IDS = set(int(x.strip()) for x in admin_ids_str.split(",") if x.strip())
-    except:
-        pass
-
-allowed_ids_str = os.getenv("ALLOWED_USER_IDS", "")
-if allowed_ids_str:
-    try:
-        ALLOWED_USER_IDS = set(int(x.strip()) for x in allowed_ids_str.split(",") if x.strip())
-    except:
-        pass
 
 # 前20加密货币列表
 TOP_20_CRYPTOS = [
