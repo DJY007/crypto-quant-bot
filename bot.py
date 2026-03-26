@@ -93,8 +93,10 @@ def load_whitelist():
         if os.path.exists('whitelist.json'):
             with open('whitelist.json', 'r') as f:
                 data = json.load(f)
-                ALLOWED_USER_IDS = set(data.get('allowed', []))
-                # 合并环境变量和文件中的管理员
+                # 加载普通用户
+                file_allowed = set(data.get('allowed', []))
+                ALLOWED_USER_IDS = ALLOWED_USER_IDS.union(file_allowed)
+                # 加载文件中的管理员，合并到环境变量的管理员
                 file_admins = set(data.get('admins', []))
                 ADMIN_USER_IDS = ADMIN_USER_IDS.union(file_admins)
                 print(f"✅ 已加载白名单: {len(ALLOWED_USER_IDS)} 个用户, {len(ADMIN_USER_IDS)} 个管理员")
