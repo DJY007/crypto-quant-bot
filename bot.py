@@ -36,6 +36,10 @@ BINANCE_API_BASES = [
     "https://api3.binance.com",
     "https://api4.binance.com",
 ]
+
+# OKX API作为备选
+OKX_API_BASE = "https://www.okx.com"
+
 DEEPSEEK_API_BASE = "https://api.deepseek.com"
 
 # 管理员用户ID列表
@@ -153,14 +157,63 @@ class CryptoAnalyzerBot:
                         return await response.json()
                     else:
                         error_text = await response.text()
-                        last_error = f"{api_base}: HTTP {response.status} - {error_text}"
+                        last_error = f"{api_base}: HTTP {response.status}"
                         print(f"⚠️ {last_error}")
             except Exception as e:
-                last_error = f"{api_base}: {str(e)}"
+                last_error = f"{api_base}: {str(e)[:50]}"
                 print(f"⚠️ {last_error}")
                 continue
         
-        raise Exception(f"所有币安API域名都无法访问。最后一个错误: {last_error}")
+        # 如果币安都失败了，尝试OKX
+        print("⚠️ 币安API全部失败，尝试OKX...")
+        try:
+            return await self.get_klines_okx(symbol, interval, limit)
+        except Exception as e:
+            raise Exception(f"所有API都无法访问。币安: {last_error}, OKX: {str(e)[:100]}")
+    
+    async def get_klines_okx(self, symbol: str, interval: str, limit: int = KLINE_LIMIT) -> List[List]:
+        """从OKX获取K线数据（币安备选）"""
+        # OKX时间周期映射
+        okx_intervals = {
+            "15m": "15m",
+            "1h": "1H",
+            "4h": "4H",
+            "1d": "1D",
+            "1w": "1W",
+            "1M": "1M"
+        }
+        
+        okx_interval = okx_intervals.get(interval, "1H")
+        symbol_okx = f"{symbol.upper()}-USDT"
+        
+        url = f"{OKX_API_BASE}/api/v5/market/candles"
+        params = {
+            "instId": symbol_okx,
+            "bar": okx_interval,
+            "limit": limit
+        }
+        
+        async with self.session.get(url, params=params, timeout=10) as response:
+            if response.status == 200:
+                data = await response.json()
+                if data.get("code") == "0" and data.get("data"):
+                    # OKX数据格式转换为币安格式
+                    # OKX: [ts, o, h, l, c, vol, volCcy, volCcyQuote, confirm]
+                    # 币安: [ts, o, h, l, c, vol, close_time, ...]
+                    okx_klines = data["data"]
+                    converted = []
+                    for k in okx_klines:
+                        ts = int(k[0])
+                        o, h, l, c = float(k[1]), float(k[2]), float(k[3]), float(k[4])
+                        vol = float(k[5])
+                        # 币安格式: [ts, open, high, low, close, volume, close_time, ...]
+                        converted.append([ts, str(o), str(h), str(l), str(c), str(vol), ts + 60000, "0", "0", "0", "0", "0"])
+                    return converted
+                else:
+                    raise Exception(f"OKX API返回错误: {data}")
+            else:
+                error_text = await response.text()
+                raise Exception(f"OKX API错误: HTTP {response.status} - {error_text}")
     
     def create_kline_chart(self, klines: List[List], symbol: str, timeframe: str) -> BytesIO:
         """生成K线图"""
