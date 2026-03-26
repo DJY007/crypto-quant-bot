@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: crypto-quant-bot
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        value: 8728057887:AAFK3-xdwK8rv2zawy5pImp56LbomZZ8z28
+      - key: DEEPSEEK_API_KEY
+        value: sk-688c91dac04d4ba4bfe27a48ca552310
+    autoDeploy: true
