@@ -27,7 +27,15 @@ from typing import Optional, Dict, List, Tuple, Set
 # 配置
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
-BINANCE_API_BASE = "https://api.binance.com"
+
+# 币安API备用域名列表
+BINANCE_API_BASES = [
+    "https://api.binance.com",
+    "https://api1.binance.com",
+    "https://api2.binance.com",
+    "https://api3.binance.com",
+    "https://api4.binance.com",
+]
 DEEPSEEK_API_BASE = "https://api.deepseek.com"
 
 # 管理员用户ID列表
@@ -129,20 +137,30 @@ class CryptoAnalyzerBot:
             await self.session.close()
     
     async def get_klines(self, symbol: str, interval: str, limit: int = KLINE_LIMIT) -> List[List]:
-        """从币安获取K线数据"""
-        url = f"{BINANCE_API_BASE}/api/v3/klines"
+        """从币安获取K线数据（尝试多个备用域名）"""
         params = {
             "symbol": symbol.upper(),
             "interval": interval,
             "limit": limit
         }
         
-        async with self.session.get(url, params=params) as response:
-            if response.status == 200:
-                return await response.json()
-            else:
-                error_text = await response.text()
-                raise Exception(f"币安API错误: {error_text}")
+        last_error = None
+        for api_base in BINANCE_API_BASES:
+            try:
+                url = f"{api_base}/api/v3/klines"
+                async with self.session.get(url, params=params, timeout=10) as response:
+                    if response.status == 200:
+                        return await response.json()
+                    else:
+                        error_text = await response.text()
+                        last_error = f"{api_base}: HTTP {response.status} - {error_text}"
+                        print(f"⚠️ {last_error}")
+            except Exception as e:
+                last_error = f"{api_base}: {str(e)}"
+                print(f"⚠️ {last_error}")
+                continue
+        
+        raise Exception(f"所有币安API域名都无法访问。最后一个错误: {last_error}")
     
     def create_kline_chart(self, klines: List[List], symbol: str, timeframe: str) -> BytesIO:
         """生成K线图"""
