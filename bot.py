@@ -2,10 +2,11 @@
 """
 加密货币量化分析 Telegram Bot
 功能：
-1. 从币安API获取K线数据
-2. 生成K线图
-3. 调用DeepSeek API进行量化分析
-4. 发送分析结果到Telegram
+1. 白名单访问控制
+2. 从币安API获取K线数据
+3. 生成K线图
+4. 调用DeepSeek API进行量化分析
+5. 交互式按钮菜单
 """
 
 import os
@@ -19,13 +20,45 @@ import matplotlib.dates as mdates
 import pandas as pd
 from datetime import datetime, timedelta
 from io import BytesIO
-from typing import Optional, Dict, List, Tuple
+from typing import Optional, Dict, List, Tuple, Set
 
 # 配置
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 BINANCE_API_BASE = "https://api.binance.com"
 DEEPSEEK_API_BASE = "https://api.deepseek.com"
+
+# 管理员用户ID（可以添加其他用户）
+# 请把你的Telegram用户ID填在这里
+ADMIN_USER_IDS: Set[int] = set()
+# 示例: ADMIN_USER_IDS = {123456789, 987654321}
+
+# 允许访问的用户ID列表（白名单）
+ALLOWED_USER_IDS: Set[int] = set()
+
+# 前20加密货币列表
+TOP_20_CRYPTOS = [
+    ("BTC", "比特币 Bitcoin"),
+    ("ETH", "以太坊 Ethereum"),
+    ("BNB", "币安币 BNB"),
+    ("SOL", "索拉纳 Solana"),
+    ("XRP", "瑞波币 XRP"),
+    ("DOGE", "狗狗币 Dogecoin"),
+    ("ADA", "艾达币 Cardano"),
+    ("AVAX", "雪崩 Avalanche"),
+    ("DOT", "波卡 Polkadot"),
+    ("LINK", "Chainlink"),
+    ("MATIC", "Polygon"),
+    ("LTC", "莱特币 Litecoin"),
+    ("UNI", "Uniswap"),
+    ("ATOM", "Cosmos"),
+    ("ETC", "以太经典 Ethereum Classic"),
+    ("XLM", "恒星币 Stellar"),
+    ("FIL", "Filecoin"),
+    ("ARB", "Arbitrum"),
+    ("OP", "Optimism"),
+    ("NEAR", "NEAR Protocol"),
+]
 
 # K线周期映射
 TIMEFRAMES = {
@@ -39,6 +72,42 @@ TIMEFRAMES = {
 
 # 获取K线数据的限制数量
 KLINE_LIMIT = 100
+
+
+def load_whitelist():
+    """从文件加载白名单"""
+    global ALLOWED_USER_IDS, ADMIN_USER_IDS
+    try:
+        if os.path.exists('whitelist.json'):
+            with open('whitelist.json', 'r') as f:
+                data = json.load(f)
+                ALLOWED_USER_IDS = set(data.get('allowed', []))
+                ADMIN_USER_IDS = set(data.get('admins', []))
+                print(f"✅ 已加载白名单: {len(ALLOWED_USER_IDS)} 个用户")
+    except Exception as e:
+        print(f"⚠️ 加载白名单失败: {e}")
+
+
+def save_whitelist():
+    """保存白名单到文件"""
+    try:
+        with open('whitelist.json', 'w') as f:
+            json.dump({
+                'allowed': list(ALLOWED_USER_IDS),
+                'admins': list(ADMIN_USER_IDS)
+            }, f)
+    except Exception as e:
+        print(f"⚠️ 保存白名单失败: {e}")
+
+
+def is_allowed(user_id: int) -> bool:
+    """检查用户是否在白名单中"""
+    return user_id in ALLOWED_USER_IDS or user_id in ADMIN_USER_IDS
+
+
+def is_admin(user_id: int) -> bool:
+    """检查用户是否是管理员"""
+    return user_id in ADMIN_USER_IDS
 
 
 class CryptoAnalyzerBot:
@@ -230,7 +299,7 @@ K线数据:
         
         return "\n".join(summary)
     
-    async def send_message(self, chat_id: int, text: str) -> None:
+    async def send_message(self, chat_id: int, text: str, reply_markup: dict = None) -> dict:
         """发送文本消息到Telegram"""
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
         payload = {
@@ -238,11 +307,39 @@ K线数据:
             "text": text,
             "parse_mode": "Markdown"
         }
+        if reply_markup:
+            payload["reply_markup"] = json.dumps(reply_markup)
         
         async with self.session.post(url, json=payload) as response:
-            if response.status != 200:
-                error_text = await response.text()
-                print(f"发送消息失败: {error_text}")
+            result = await response.json()
+            if not result.get('ok'):
+                print(f"发送消息失败: {result}")
+            return result
+    
+    async def edit_message(self, chat_id: int, message_id: int, text: str, reply_markup: dict = None) -> dict:
+        """编辑消息"""
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/editMessageText"
+        payload = {
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "text": text,
+            "parse_mode": "Markdown"
+        }
+        if reply_markup:
+            payload["reply_markup"] = json.dumps(reply_markup)
+        
+        async with self.session.post(url, json=payload) as response:
+            return await response.json()
+    
+    async def answer_callback(self, callback_query_id: str, text: str = None) -> None:
+        """回答回调查询"""
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/answerCallbackQuery"
+        payload = {"callback_query_id": callback_query_id}
+        if text:
+            payload["text"] = text
+        
+        async with self.session.post(url, json=payload) as response:
+            pass
     
     async def send_photo(self, chat_id: int, photo: BytesIO, caption: str = "") -> None:
         """发送图片到Telegram"""
@@ -299,53 +396,249 @@ K线数据:
             await self.send_message(chat_id, f"❌ 分析失败: {str(e)}")
 
 
-class TelegramWebhookHandler:
-    """处理Telegram Webhook请求"""
+def get_main_menu_keyboard() -> dict:
+    """获取主菜单键盘"""
+    return {
+        "inline_keyboard": [
+            [{"text": "📊 DeepSeek量化分析", "callback_data": "menu_analysis"}],
+            [{"text": "❓ 使用帮助", "callback_data": "menu_help"}]
+        ]
+    }
+
+
+def get_crypto_list_keyboard(page: int = 0) -> dict:
+    """获取加密货币列表键盘"""
+    items_per_page = 10
+    start = page * items_per_page
+    end = min(start + items_per_page, len(TOP_20_CRYPTOS))
     
-    def __init__(self):
-        self.bot = CryptoAnalyzerBot()
+    keyboard = []
     
-    async def handle_update(self, update: Dict) -> None:
-        """处理Telegram更新"""
-        async with self.bot:
-            if 'message' in update:
-                message = update['message']
-                chat_id = message['chat']['id']
-                text = message.get('text', '')
-                
-                # 处理命令
-                if text.startswith('/start'):
-                    await self.bot.send_message(
-                        chat_id,
-                        "👋 欢迎使用加密货币量化分析Bot!\n\n"
-                        "可用命令:\n"
-                        "/analyze <交易对> - 分析指定加密货币\n"
-                        "例如: /analyze BTCUSDT\n\n"
-                        "支持的时间周期: 15m, 1h, 4h, 1d, 1w, 1M"
-                    )
-                
-                elif text.startswith('/analyze'):
-                    parts = text.split()
-                    if len(parts) < 2:
-                        await self.bot.send_message(
-                            chat_id,
-                            "❌ 请提供交易对\n例如: /analyze BTCUSDT"
-                        )
-                        return
-                    
-                    symbol = parts[1]
-                    await self.bot.analyze_crypto(chat_id, symbol)
-                
-                else:
-                    await self.bot.send_message(
-                        chat_id,
-                        "❓ 未知命令\n使用 /analyze <交易对> 进行分析"
-                    )
+    # 添加加密货币按钮（每行2个）
+    for i in range(start, end, 2):
+        row = []
+        symbol, name = TOP_20_CRYPTOS[i]
+        row.append({"text": f"{symbol}", "callback_data": f"analyze_{symbol}USDT"})
+        if i + 1 < end:
+            symbol2, name2 = TOP_20_CRYPTOS[i + 1]
+            row.append({"text": f"{symbol2}", "callback_data": f"analyze_{symbol2}USDT"})
+        keyboard.append(row)
+    
+    # 添加分页按钮
+    nav_row = []
+    if page > 0:
+        nav_row.append({"text": "⬅️ 上一页", "callback_data": f"page_{page-1}"})
+    if end < len(TOP_20_CRYPTOS):
+        nav_row.append({"text": "➡️ 下一页", "callback_data": f"page_{page+1}"})
+    if nav_row:
+        keyboard.append(nav_row)
+    
+    # 添加返回按钮
+    keyboard.append([{"text": "🔙 返回主菜单", "callback_data": "menu_main"}])
+    
+    return {"inline_keyboard": keyboard}
+
+
+def get_admin_keyboard() -> dict:
+    """获取管理员键盘"""
+    return {
+        "inline_keyboard": [
+            [{"text": "➕ 添加用户", "callback_data": "admin_add_user"}],
+            [{"text": "➖ 移除用户", "callback_data": "admin_remove_user"}],
+            [{"text": "📋 查看白名单", "callback_data": "admin_list_users"}],
+            [{"text": "🔙 返回主菜单", "callback_data": "menu_main"}]
+        ]
+    }
+
+
+async def handle_start(bot: CryptoAnalyzerBot, chat_id: int, user_id: int) -> None:
+    """处理/start命令"""
+    if not is_allowed(user_id):
+        await bot.send_message(
+            chat_id,
+            "⛔ *访问被拒绝*\n\n"
+            "您没有权限使用此Bot。\n"
+            f"您的用户ID: `{user_id}`\n\n"
+            "请联系管理员获取访问权限。"
+        )
+        return
+    
+    welcome_text = (
+        "👋 *欢迎使用加密货币量化分析Bot!*\n\n"
+        "🤖 本Bot提供专业的AI量化分析服务\n"
+        "📊 基于币安K线数据 + DeepSeek AI\n"
+        "💼 提供完整的交易策略建议\n\n"
+        "请选择功能："
+    )
+    
+    await bot.send_message(chat_id, welcome_text, get_main_menu_keyboard())
+
+
+async def handle_callback(bot: CryptoAnalyzerBot, callback_query: dict) -> None:
+    """处理回调查询"""
+    callback_data = callback_query.get('data', '')
+    chat_id = callback_query['message']['chat']['id']
+    message_id = callback_query['message']['message_id']
+    user_id = callback_query['from']['id']
+    
+    # 检查权限
+    if not is_allowed(user_id):
+        await bot.answer_callback(callback_query['id'], "⛔ 您没有权限")
+        return
+    
+    await bot.answer_callback(callback_query['id'])
+    
+    # 处理菜单导航
+    if callback_data == "menu_main":
+        welcome_text = (
+            "👋 *欢迎使用加密货币量化分析Bot!*\n\n"
+            "🤖 本Bot提供专业的AI量化分析服务\n"
+            "📊 基于币安K线数据 + DeepSeek AI\n"
+            "💼 提供完整的交易策略建议\n\n"
+            "请选择功能："
+        )
+        await bot.edit_message(chat_id, message_id, welcome_text, get_main_menu_keyboard())
+    
+    elif callback_data == "menu_analysis":
+        analysis_text = (
+            "📊 *DeepSeek量化分析*\n\n"
+            "请选择要分析的加密货币：\n\n"
+            "💡 点击币种即可开始分析\n"
+            "⏱️ 分析时间约10-20秒"
+        )
+        await bot.edit_message(chat_id, message_id, analysis_text, get_crypto_list_keyboard(0))
+    
+    elif callback_data == "menu_help":
+        help_text = (
+            "❓ *使用帮助*\n\n"
+            "📊 *DeepSeek量化分析*\n"
+            "点击后选择前20加密货币之一\n"
+            "Bot将自动获取多周期K线数据\n"
+            "并调用DeepSeek AI进行量化分析\n\n"
+            "📈 *分析报告包含：*\n"
+            "• 6个周期K线图（15m/1h/4h/1d/1w/1M）\n"
+            "• 市场结构判断\n"
+            "• 关键支撑位/阻力位\n"
+            "• 多空概率分析\n"
+            "• 可执行交易策略\n"
+            "• 风险收益比计算\n\n"
+            "⚠️ *风险提示*\n"
+            "分析结果仅供参考，不构成投资建议"
+        )
+        keyboard = {
+            "inline_keyboard": [
+                [{"text": "🔙 返回主菜单", "callback_data": "menu_main"}]
+            ]
+        }
+        await bot.edit_message(chat_id, message_id, help_text, keyboard)
+    
+    # 处理分页
+    elif callback_data.startswith("page_"):
+        page = int(callback_data.split("_")[1])
+        analysis_text = (
+            "📊 *DeepSeek量化分析*\n\n"
+            "请选择要分析的加密货币：\n\n"
+            "💡 点击币种即可开始分析\n"
+            "⏱️ 分析时间约10-20秒"
+        )
+        await bot.edit_message(chat_id, message_id, analysis_text, get_crypto_list_keyboard(page))
+    
+    # 处理分析请求
+    elif callback_data.startswith("analyze_"):
+        symbol = callback_data.replace("analyze_", "")
+        await bot.edit_message(
+            chat_id, message_id,
+            f"🔍 开始分析 {symbol}...",
+            {"inline_keyboard": [[{"text": "🔙 返回列表", "callback_data": "menu_analysis"}]]}
+        )
+        await bot.analyze_crypto(chat_id, symbol)
+    
+    # 处理管理员命令
+    elif callback_data.startswith("admin_"):
+        if not is_admin(user_id):
+            await bot.send_message(chat_id, "⛔ 您不是管理员")
+            return
+        
+        if callback_data == "admin_add_user":
+            await bot.send_message(
+                chat_id,
+                "➕ *添加用户*\n\n"
+                "请发送命令：\n"
+                "`/adduser <用户ID>`\n\n"
+                "用户可以通过发送 /myid 获取自己的ID"
+            )
+        elif callback_data == "admin_remove_user":
+            await bot.send_message(
+                chat_id,
+                "➖ *移除用户*\n\n"
+                "请发送命令：\n"
+                "`/removeuser <用户ID>`"
+            )
+        elif callback_data == "admin_list_users":
+            admin_list = "\n".join([f"• `{uid}` (管理员)" for uid in ADMIN_USER_IDS]) if ADMIN_USER_IDS else "无"
+            user_list = "\n".join([f"• `{uid}`" for uid in ALLOWED_USER_IDS]) if ALLOWED_USER_IDS else "无"
+            
+            list_text = (
+                "📋 *白名单用户*\n\n"
+                "*管理员：*\n" + admin_list + "\n\n"
+                "*普通用户：*\n" + user_list
+            )
+            await bot.send_message(chat_id, list_text)
+
+
+async def handle_admin_commands(bot: CryptoAnalyzerBot, chat_id: int, user_id: int, text: str) -> bool:
+    """处理管理员命令，返回是否已处理"""
+    if not is_admin(user_id):
+        return False
+    
+    # 添加用户
+    if text.startswith("/adduser "):
+        try:
+            target_id = int(text.split()[1])
+            ALLOWED_USER_IDS.add(target_id)
+            save_whitelist()
+            await bot.send_message(chat_id, f"✅ 已添加用户 `{target_id}` 到白名单")
+            return True
+        except:
+            await bot.send_message(chat_id, "❌ 格式错误，请使用: `/adduser <用户ID>`")
+            return True
+    
+    # 移除用户
+    elif text.startswith("/removeuser "):
+        try:
+            target_id = int(text.split()[1])
+            if target_id in ALLOWED_USER_IDS:
+                ALLOWED_USER_IDS.discard(target_id)
+                save_whitelist()
+                await bot.send_message(chat_id, f"✅ 已移除用户 `{target_id}`")
+            else:
+                await bot.send_message(chat_id, "❌ 用户不在白名单中")
+            return True
+        except:
+            await bot.send_message(chat_id, "❌ 格式错误，请使用: `/removeuser <用户ID>`")
+            return True
+    
+    # 添加管理员
+    elif text.startswith("/addadmin "):
+        try:
+            target_id = int(text.split()[1])
+            ADMIN_USER_IDS.add(target_id)
+            save_whitelist()
+            await bot.send_message(chat_id, f"✅ 已添加 `{target_id}` 为管理员")
+            return True
+        except:
+            await bot.send_message(chat_id, "❌ 格式错误，请使用: `/addadmin <用户ID>`")
+            return True
+    
+    return False
 
 
 def run_polling():
     """运行Bot轮询模式"""
     import asyncio
+    
+    # 加载白名单
+    load_whitelist()
     
     async def poll():
         bot = CryptoAnalyzerBot()
@@ -365,39 +658,72 @@ def run_polling():
                                 for update in data['result']:
                                     last_update_id = update['update_id']
                                     
+                                    # 处理回调查询
+                                    if 'callback_query' in update:
+                                        await handle_callback(bot, update['callback_query'])
+                                    
                                     # 处理消息
-                                    if 'message' in update:
+                                    elif 'message' in update:
                                         message = update['message']
                                         chat_id = message['chat']['id']
+                                        user_id = message['from']['id']
                                         text = message.get('text', '')
                                         
-                                        # 处理命令
-                                        if text.startswith('/start'):
+                                        # 获取用户ID命令
+                                        if text == '/myid':
                                             await bot.send_message(
                                                 chat_id,
-                                                "👋 欢迎使用加密货币量化分析Bot!\n\n"
-                                                "可用命令:\n"
-                                                "/analyze <交易对> - 分析指定加密货币\n"
-                                                "例如: /analyze BTCUSDT\n\n"
-                                                "支持的时间周期: 15m, 1h, 4h, 1d, 1w, 1M"
+                                                f"🆔 您的用户ID是：\n`{user_id}`\n\n"
+                                                "请将此ID发送给管理员获取访问权限。"
                                             )
+                                            continue
                                         
+                                        # 处理管理员命令
+                                        if await handle_admin_commands(bot, chat_id, user_id, text):
+                                            continue
+                                        
+                                        # 处理/start命令
+                                        if text.startswith('/start'):
+                                            await handle_start(bot, chat_id, user_id)
+                                        
+                                        # 处理/analyze命令
                                         elif text.startswith('/analyze'):
+                                            if not is_allowed(user_id):
+                                                await bot.send_message(
+                                                    chat_id,
+                                                    "⛔ *访问被拒绝*\n\n"
+                                                    "您没有权限使用此Bot。\n"
+                                                    f"您的用户ID: `{user_id}`\n\n"
+                                                    "请联系管理员获取访问权限。"
+                                                )
+                                                continue
+                                            
                                             parts = text.split()
                                             if len(parts) < 2:
                                                 await bot.send_message(
                                                     chat_id,
-                                                    "❌ 请提供交易对\n例如: /analyze BTCUSDT"
+                                                    "❌ 请提供交易对\n例如: `/analyze BTCUSDT`"
                                                 )
                                                 continue
                                             
                                             symbol = parts[1]
                                             await bot.analyze_crypto(chat_id, symbol)
                                         
-                                        else:
+                                        # 管理员菜单
+                                        elif text == '/admin':
+                                            if not is_admin(user_id):
+                                                await bot.send_message(chat_id, "⛔ 您不是管理员")
+                                                continue
+                                            
                                             await bot.send_message(
                                                 chat_id,
-                                                "❓ 未知命令\n使用 /analyze <交易对> 进行分析"
+                                                "🔧 *管理员面板*\n\n"
+                                                "可用命令：\n"
+                                                "• `/adduser <ID>` - 添加用户\n"
+                                                "• `/removeuser <ID>` - 移除用户\n"
+                                                "• `/addadmin <ID>` - 添加管理员\n"
+                                                "• `/myid` - 查看自己的ID",
+                                                get_admin_keyboard()
                                             )
                     
                     await asyncio.sleep(1)
@@ -420,5 +746,6 @@ if __name__ == "__main__":
         exit(1)
     
     print("🚀 启动加密货币量化分析Bot...")
-    print("使用轮询模式运行")
+    print("✅ 功能: 白名单控制 + 交互式菜单 + DeepSeek量化分析")
+    print("📋 命令: /start - 主菜单, /myid - 查看ID, /admin - 管理员面板")
     run_polling()
