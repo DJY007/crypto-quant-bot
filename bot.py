@@ -102,7 +102,8 @@ def save_whitelist():
 
 def is_allowed(user_id: int) -> bool:
     """检查用户是否在白名单中"""
-    return user_id in ALLOWED_USER_IDS or user_id in ADMIN_USER_IDS
+    # 暂时允许所有人访问
+    return True
 
 
 def is_admin(user_id: int) -> bool:
