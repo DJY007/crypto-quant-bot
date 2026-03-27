@@ -43,9 +43,17 @@ TOP_20_CRYPTOS = [
 # 时间周期
 TIMEFRAMES = {"1h": "1h", "4h": "4h", "1d": "1d"}
 
+# 允许访问的用户ID列表（白名单）
+# 请把你的Telegram数字ID填在这里
+ALLOWED_USER_IDS = set()
+
 
 def is_allowed(user_id: int) -> bool:
-    return True
+    """检查用户是否有权限使用Bot"""
+    # 如果没有设置白名单，允许所有人访问
+    if not ALLOWED_USER_IDS:
+        return True
+    return user_id in ALLOWED_USER_IDS
 
 
 class Bot:
@@ -91,36 +99,47 @@ class Bot:
             print(f"发送图片错误: {e}")
     
     async def get_klines_with_fallback(self, symbol: str) -> List[List]:
-        """获取K线数据，带多重备选"""
+        """获取K线数据，带多重备选 - TradingView优先"""
         errors = []
         
-        # 尝试1: 币安API
+        # 尝试1: TradingView API (主要数据源)
+        try:
+            print(f"尝试TradingView API: {symbol}")
+            data = await self.get_tradingview_klines(symbol)
+            if data and len(data) > 10:
+                print(f"✅ TradingView API成功")
+                return data
+        except Exception as e:
+            errors.append(f"TradingView: {str(e)[:50]}")
+            print(f"❌ TradingView失败: {e}")
+        
+        # 尝试2: 币安API
         try:
             print(f"尝试币安API: {symbol}")
             data = await self.get_binance_klines(symbol)
-            if data:
+            if data and len(data) > 10:
                 print(f"✅ 币安API成功")
                 return data
         except Exception as e:
             errors.append(f"币安: {str(e)[:50]}")
             print(f"❌ 币安失败: {e}")
         
-        # 尝试2: OKX API
+        # 尝试3: OKX API
         try:
             print(f"尝试OKX API: {symbol}")
             data = await self.get_okx_klines(symbol)
-            if data:
+            if data and len(data) > 10:
                 print(f"✅ OKX API成功")
                 return data
         except Exception as e:
             errors.append(f"OKX: {str(e)[:50]}")
             print(f"❌ OKX失败: {e}")
         
-        # 尝试3: CoinGecko
+        # 尝试4: CoinGecko
         try:
             print(f"尝试CoinGecko: {symbol}")
             data = await self.get_coingecko_data(symbol)
-            if data:
+            if data and len(data) > 10:
                 print(f"✅ CoinGecko成功")
                 return data
         except Exception as e:
@@ -131,6 +150,66 @@ class Bot:
         print(f"⚠️ 所有API失败，使用模拟数据: {symbol}")
         print(f"错误记录: {errors}")
         return self.generate_mock_klines(symbol)
+    
+    async def get_tradingview_klines(self, symbol: str) -> List[List]:
+        """TradingView API - 获取K线数据"""
+        # TradingView使用prodata.tradingview.com获取数据
+        # 支持的交易所: BINANCE, COINBASE, KRAKEN等
+        
+        # 构建TradingView symbol
+        tv_symbol = f"BINANCE:{symbol.upper()}USDT"
+        
+        # TradingView历史数据API
+        url = "https://prodata.tradingview.com/history"
+        
+        # 计算时间范围 (获取最近100根1小时K线)
+        to_ts = int(time.time())
+        from_ts = to_ts - 100 * 3600  # 100小时前
+        
+        params = {
+            "symbol": tv_symbol,
+            "resolution": "60",  # 1小时
+            "from": str(from_ts),
+            "to": str(to_ts),
+        }
+        
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
+        
+        async with self.session.get(url, params=params, headers=headers, timeout=15) as r:
+            if r.status == 200:
+                data = await r.json()
+                
+                # 检查数据有效性
+                if data.get('s') != 'ok' or not data.get('t'):
+                    raise Exception(f"TradingView返回无效数据: {data.get('s')}")
+                
+                # 转换TradingView格式到币安格式
+                result = []
+                timestamps = data['t']
+                opens = data['o']
+                highs = data['h']
+                lows = data['l']
+                closes = data['c']
+                volumes = data.get('v', [0] * len(timestamps))
+                
+                for i in range(len(timestamps)):
+                    ts = timestamps[i] * 1000  # 转换为毫秒
+                    result.append([
+                        ts,
+                        str(opens[i]),
+                        str(highs[i]),
+                        str(lows[i]),
+                        str(closes[i]),
+                        str(volumes[i]),
+                        ts + 3600000,  # 收盘时间
+                        "0", "0", "0", "0", "0"
+                    ])
+                
+                return result
+            
+            raise Exception(f"HTTP {r.status}")
     
     async def get_binance_klines(self, symbol: str) -> List[List]:
         """币安API"""
